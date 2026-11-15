@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>站点观测批次 · 契约校验与隔离</title>
+<style>
+  :root {
+    --ok: #1a7f37; --ok-bg: #e6f4ea;
+    --broken: #c0392b; --broken-bg: #fdecea;
+    --unknown: #b26a00; --unknown-bg: #fff4e0;
+    --line: #d8dee4; --ink: #1f2328; --muted: #656d76;
+    --card: #ffffff; --bg: #f4f6f9; --accent: #0b5cad;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+         background: var(--bg); color: var(--ink); }
+  header { background: #0d2c4f; color: #fff; padding: 14px 24px; display: flex;
+           align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .ver { font-size: 13px; opacity: .85; }
+  header a { color: #9ec5ff; font-size: 13px; text-decoration: none; }
+  header a:hover { text-decoration: underline; }
+  main { max-width: 1180px; margin: 20px auto; padding: 0 16px 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 16px 18px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .field label { color: var(--muted); }
+  input[type=file], input[type=text] { font-size: 13px; padding: 6px; border: 1px solid var(--line);
+          border-radius: 6px; background: #fff; min-width: 220px; }
+  button { font-size: 13px; padding: 8px 16px; border: 0; border-radius: 6px; cursor: pointer;
+           background: var(--accent); color: #fff; }
+  button.ghost { background: #eef2f6; color: var(--ink); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: wait; }
+  .banner { display: none; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-top: 10px;
+            white-space: pre-wrap; }
+  .banner.err { display: block; background: var(--broken-bg); color: var(--broken); border: 1px solid #f5c6c0; }
+  .banner.ok  { display: block; background: var(--ok-bg); color: var(--ok); border: 1px solid #b7dfc2; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .stat .n { font-size: 24px; font-weight: 700; }
+  .stat .t { font-size: 12px; color: var(--muted); }
+  .stat.bad .n { color: var(--broken); } .stat.good .n { color: var(--ok); }
+  .stat.warn .n { color: var(--unknown); } .stat.info .n { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: #fafbfc; position: sticky; top: 0; }
+  tr.alert td { background: #fff8f7; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.bad { background: var(--broken-bg); color: var(--broken); }
+  .badge.mut { background: #eef2f6; color: var(--muted); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px;
+         background: #eef2f6; color: var(--muted); margin-left: 6px; }
+  .tag.req { background: #fdecea; color: var(--broken); }
+  .tag.opt { background: #e6f4ea; color: var(--ok); }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  .reason { color: var(--muted); font-size: 12px; }
+  .hist { font-size: 12.5px; color: var(--muted); }
+  .hist table td, .hist table th { padding: 5px 8px; }
+  .empty { color: var(--muted); font-size: 13.5px; padding: 18px; text-align: center; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.7; }
+  code { background: #eef2f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .meta b { color: var(--ink); }
+  .errlist { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--broken); }
+  .scroll { overflow: auto; max-height: 60vh; margin-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>站点观测批次 · 契约校验与隔离</h1>
+  <span class="ver" id="contractInfo">正在读取现役契约…</span>
+  <a href="/">← 字段变更核查</a>
+</header>
+<main>
+  <div class="card" id="contractCard" style="display:none">
+    <h2>现役契约</h2>
+    <div class="meta" id="contractMeta"></div>
+    <div class="scroll" style="max-height:40vh">
+      <table>
+        <thead><tr><th>列名</th><th>类型</th><th>可空性</th><th>约束</th><th>说明</th></tr></thead>
+        <tbody id="contractCols"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>上传新契约（仅兼容演进可替换现役契约）</h2>
+    <div class="row">
+      <div class="field"><label>契约 JSON（带版本号）</label><input type="file" id="fContract" accept=".json,application/json"></div>
+      <button id="btnContract">校验兼容性并发布</button>
+      <button class="ghost" id="btnCv1">示例契约 v1</button>
+      <button class="ghost" id="btnCv2">示例 v2（放宽，兼容）</button>
+      <button class="ghost" id="btnCv3">示例 v3（收紧，应被拒）</button>
+    </div>
+    <div class="banner" id="cbanner"></div>
+    <div class="hint">
+      兼容口径：仅允许 <b>新增可选列</b> 或 <b>放宽约束</b>（必填转可空、范围放宽、枚举扩大、删除模式/唯一约束、版本号递增）。
+      <b>删列、改类型、新增必填列、任何收紧</b> 一律拒绝并保留现役契约，拒绝记录留痕于契约历史。
+      示例文件可下载后修改再上传：
+      <a href="/examples/contract_v1.json">v1</a> ·
+      <a href="/examples/contract_v2_relaxed.json">v2 放宽</a> ·
+      <a href="/examples/contract_v3_invalid.json">v3 违规</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>批次校验与发布（按上传时的现役契约快照逐行校验）</h2>
+    <div class="row">
+      <div class="field"><label>观测记录 CSV</label><input type="file" id="fCsv" accept=".csv,text/csv"></div>
+      <div class="field"><label>批次名称（可选）</label><input type="text" id="fBatchName" placeholder="如：2026-11-15 白班批次"></div>
+      <button id="btnBatch">校验并发布</button>
+      <button class="ghost" id="btnCsvOk">合格批次示例</button>
+      <button class="ghost" id="btnCsvBad">含错批次示例</button>
+      <button class="ghost" id="btnCsvV2">v2 批次示例</button>
+    </div>
+    <div class="banner" id="bbanner"></div>
+    <div class="hint">
+      仅 <b>全量通过</b> 的批次可发布；任何一行不合格即整批隔离，逐行错误列入下方隔离清单，
+      <b>失败不会改变上次可用批次</b>。每个批次都绑定校验时的契约快照，契约之后如何更新都不影响该批次的判定口径。
+      示例 CSV：
+      <a href="/examples/observations_ok.csv">合格</a> ·
+      <a href="/examples/observations_bad.csv">含错</a> ·
+      <a href="/examples/observations_v2_ok.csv">v2 批次</a>
+    </div>
+    <div id="quarantineArea" style="display:none">
+      <h2 style="margin-top:14px">隔离清单（本次上传）</h2>
+      <div class="summary" id="qsummary"></div>
+      <div id="qheaders"></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th style="width:70px">行号</th><th style="width:38%">错误</th><th>原始记录</th></tr></thead>
+          <tbody id="qtbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="currentBatchCard" style="display:none">
+    <h2>上次可用批次（最新发布成功）</h2>
+    <div class="meta" id="curBatchMeta"></div>
+    <div id="curBatchCols"></div>
+    <div class="scroll" style="max-height:40vh">
+      <table>
+        <thead id="curBatchHead"></thead>
+        <tbody id="curBatchRows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="batchDetailCard" style="display:none">
+    <h2>批次详情</h2>
+    <div class="meta" id="batchMeta"></div>
+    <div id="batchBody"></div>
+  </div>
+
+  <div class="card hist">
+    <h2>批次历史（最近 20 条）</h2>
+    <div id="batches"><div class="empty">暂无记录</div></div>
+  </div>
+
+  <div class="card hist">
+    <h2>契约历史（最近 20 条）</h2>
+    <div id="contracts"><div class="empty">暂无记录</div></div>
+  </div>
+</main>
+
+<script>
+let ACTIVE_CONTRACT = null;   // 现役契约
+let traceSeq = 0;
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+function showBanner(id, kind, msg) {
+  const b = document.getElementById(id);
+  b.className = "banner " + kind; b.textContent = msg;
+}
+
+async function fetchExample(name) {
+  const r = await fetch("/examples/" + name);
+  if (!r.ok) throw new Error("示例文件未部署：" + name);
+  const type = name.endsWith(".csv") ? "text/csv" : "application/json";
+  return new File([await r.blob()], name, {type});
+}
+
+// ---------- 契约上传 ----------
+
+async function uploadContract(file) {
+  const fd = new FormData();
+  fd.append("contract", file);
+  const btn = document.getElementById("btnContract");
+  btn.disabled = true; btn.textContent = "校验兼容性…";
+  try {
+    const res = await api("/api/contracts", {method: "POST", body: fd});
+    showBanner("cbanner", "ok",
+      `契约 v${res.version} 已发布为现役契约（第 ${res.id} 版，${res.columns} 列）` +
+      (res.replaced ? `，已替换 v${res.replaced}。` : "（首个契约）。"));
+    await loadContractAll();
+  } catch (e) {
+    showBanner("cbanner", "err", e.message);
+    await loadContractsHistory();
+  } finally {
+    btn.disabled = false; btn.textContent = "校验兼容性并发布";
+  }
+}
+
+document.getElementById("btnContract").onclick = () => {
+  const f = document.getElementById("fContract").files[0];
+  if (!f) { showBanner("cbanner", "err", "请选择契约 JSON 文件。"); return; }
+  uploadContract(f);
+};
+document.getElementById("btnCv1").onclick = async () =>
+  uploadContract(await fetchExample("contract_v1.json")).catch(e => showBanner("cbanner", "err", e.message));
+document.getElementById("btnCv2").onclick = async () =>
+  uploadContract(await fetchExample("contract_v2_relaxed.json")).catch(e => showBanner("cbanner", "err", e.message));
+document.getElementById("btnCv3").onclick = async () =>
+  uploadContract(await fetchExample("contract_v3_invalid.json")).catch(e => showBanner("cbanner", "err", e.message));
+
+// ---------- 批次上传 ----------
+
+async function uploadBatch(file) {
+  const fd = new FormData();
+  fd.append("observations", file);
+  fd.append("name", document.getElementById("fBatchName").value.trim());
+  const btn = document.getElementById("btnBatch");
+  btn.disabled = true; btn.textContent = "校验中…";
+  try {
+    const res = await api("/api/batches", {method: "POST", body: fd});
+    const s = res.summary;
+    if (res.state === "published") {
+      showBanner("bbanner", "ok",
+        `批次「${res.name}」全量通过（${s.total_rows} 行），已按契约 v${res.contract_version} 发布为第 ${res.id} 批。`);
+      document.getElementById("quarantineArea").style.display = "none";
+    } else {
+      showBanner("bbanner", "err",
+        `批次「${res.name}」未通过校验，已整批隔离（第 ${res.id} 批留痕）：` +
+        `${s.error_rows} / ${s.total_rows} 行出错，表头错误 ${s.header_errors} 处。上次可用批次不变。`);
+      renderQuarantine(res);
+    }
+    await Promise.all([loadCurrentBatch(), loadBatches()]);
+  } catch (e) {
+    showBanner("bbanner", "err", e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = "校验并发布";
+  }
+}
+
+document.getElementById("btnBatch").onclick = () => {
+  const f = document.getElementById("fCsv").files[0];
+  if (!f) { showBanner("bbanner", "err", "请选择观测 CSV 文件。"); return; }
+  uploadBatch(f);
+};
+document.getElementById("btnCsvOk").onclick = async () =>
+  uploadBatch(await fetchExample("observations_ok.csv")).catch(e => showBanner("bbanner", "err", e.message));
+document.getElementById("btnCsvBad").onclick = async () =>
+  uploadBatch(await fetchExample("observations_bad.csv")).catch(e => showBanner("bbanner", "err", e.message));
+document.getElementById("btnCsvV2").onclick = async () =>
+  uploadBatch(await fetchExample("observations_v2_ok.csv")).catch(e => showBanner("bbanner", "err", e.message));
+
+// ---------- 渲染 ----------
+
+function renderQuarantine(res) {
+  const s = res.summary;
+  document.getElementById("qsummary").innerHTML = `
+    <div class="stat"><div class="n">${s.total_rows}</div><div class="t">数据行总数</div></div>
+    <div class="stat bad"><div class="n">${s.error_rows}</div><div class="t">隔离行数</div></div>
+    <div class="stat good"><div class="n">${s.ok_rows}</div><div class="t">合格行数</div></div>
+    <div class="stat warn"><div class="n">${s.header_errors}</div><div class="t">表头错误</div></div>`;
+  document.getElementById("qheaders").innerHTML =
+    (res.header_errors && res.header_errors.length)
+      ? `<ul class="errlist">${res.header_errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul>` : "";
+  const tb = document.getElementById("qtbody");
+  tb.innerHTML = "";
+  for (const q of res.quarantine || []) {
+    const tr = document.createElement("tr");
+    tr.className = "alert";
+    const errs = q.errors.map(e =>
+      `<div>${e.column ? `<span class="mono">${esc(e.column)}</span>：` : ""}${esc(e.message)}</div>`).join("");
+    const rec = Object.entries(q.record).map(([k, v]) =>
+      `<span class="mono">${esc(k)}=${esc(v)}</span>`).join("，");
+    tr.innerHTML = `<td class="mono">${q.line}</td><td>${errs}</td><td>${rec}</td>`;
+    tb.appendChild(tr);
+  }
+  document.getElementById("quarantineArea").style.display = "block";
+}
+
+function contractColsHtml(payload) {
+  return payload.columns.map(c => {
+    const cons = [];
+    if (c.min !== undefined && c.min !== null || c.max !== undefined && c.max !== null)
+      cons.push(`范围 [${c.min ?? "-∞"}, ${c.max ?? "+∞"}]`);
+    if (c.max_length) cons.push(`长度 ≤ ${c.max_length}`);
+    if (c.pattern) cons.push(`模式 ${c.pattern}`);
+    if (c.allowed) cons.push("枚举 {" + c.allowed.join(", ") + "}");
+    if (c.unique) cons.push("批次内唯一");
+    const req = c.required !== false;
+    return `<tr><td class="mono">${esc(c.name)}</td><td>${esc(c.type)}</td>` +
+      `<td>${req ? '<span class="tag req">必填</span>' : '<span class="tag opt">可空</span>'}</td>` +
+      `<td class="reason">${esc(cons.join("；") || "—")}</td>` +
+      `<td class="reason">${esc(c.description || "")}</td></tr>`;
+  }).join("");
+}
+
+async function loadContract() {
+  try {
+    ACTIVE_CONTRACT = await api("/api/contracts/current");
+  } catch (e) {
+    ACTIVE_CONTRACT = null;
+    document.getElementById("contractInfo").textContent = "暂无现役契约，请先上传发布";
+    document.getElementById("contractCard").style.display = "none";
+    return;
+  }
+  document.getElementById("contractInfo").textContent =
+    `现役契约 v${ACTIVE_CONTRACT.version} · 发布于 ${ACTIVE_CONTRACT.created_at}`;
+  document.getElementById("contractMeta").innerHTML =
+    `版本 <b>v${esc(ACTIVE_CONTRACT.version)}</b>（第 ${ACTIVE_CONTRACT.id} 版） · ` +
+    `发布于 ${esc(ACTIVE_CONTRACT.created_at)} · ${ACTIVE_CONTRACT.columns.length} 列`;
+  document.getElementById("contractCols").innerHTML =
+    ACTIVE_CONTRACT.columns.map(c =>
+      `<tr><td class="mono">${esc(c.name)}</td><td>${esc(c.type_label)}</td>` +
+      `<td>${c.required ? '<span class="tag req">必填</span>' : '<span class="tag opt">可空</span>'}</td>` +
+      `<td class="reason">${esc(c.constraints)}</td>` +
+      `<td class="reason">${esc(c.description || "")}</td></tr>`).join("");
+  document.getElementById("contractCard").style.display = "block";
+}
+
+function rowsPreviewHtml(payload, rows, limit) {
+  const cols = payload.columns.map(c => c.name);
+  const shown = rows.slice(0, limit || 50);
+  const head = `<tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr>`;
+  const body = shown.map(r =>
+    `<tr>${cols.map(c => `<td class="mono">${esc(r[c] === null || r[c] === undefined ? "" : r[c])}</td>`).join("")}</tr>`
+  ).join("");
+  const more = rows.length > shown.length
+    ? `<div class="reason" style="margin-top:6px">仅预览前 ${shown.length} 行，共 ${rows.length} 行</div>` : "";
+  return {head, body, more};
+}
+
+async function loadCurrentBatch() {
+  let cur;
+  try {
+    cur = await api("/api/batches/current");
+  } catch (e) {
+    document.getElementById("currentBatchCard").style.display = "none";
+    return;
+  }
+  document.getElementById("curBatchMeta").innerHTML =
+    `第 <b>${cur.id}</b> 批「${esc(cur.name)}」 · 发布于 ${esc(cur.created_at)} · ` +
+    `${cur.total_rows} 行 · 绑定契约 <b>v${esc(cur.contract.version)}</b>（契约第 ${cur.contract.id} 版快照）`;
+  document.getElementById("curBatchCols").innerHTML =
+    `<div class="reason">该批次判定口径固化于契约 v${esc(cur.contract.version)} 快照，与之后的契约更新无关。</div>`;
+  const p = rowsPreviewHtml(cur.contract.payload, cur.rows || [], 50);
+  document.getElementById("curBatchHead").innerHTML = p.head;
+  document.getElementById("curBatchRows").innerHTML = p.body;
+  document.getElementById("currentBatchCard").style.display = "block";
+}
+
+async function loadBatches() {
+  const {items} = await api("/api/batches");
+  const el = document.getElementById("batches");
+  if (!items.length) { el.innerHTML = '<div class="empty">暂无记录</div>'; return; }
+  const stateTxt = {published: '<span class="badge ok">已发布</span>',
+                    quarantined: '<span class="badge bad">已隔离</span>'};
+  el.innerHTML = `<table><thead><tr><th>ID</th><th>名称</th><th>时间</th><th>状态</th>` +
+    `<th>契约版本</th><th>总行数</th><th>错误行</th><th></th></tr></thead><tbody>` +
+    items.map(i => `<tr><td>${i.id}</td><td>${esc(i.name)}</td><td>${esc(i.created_at)}</td>` +
+      `<td>${stateTxt[i.state] || i.state}</td><td class="mono">v${esc(i.contract_version)}</td>` +
+      `<td>${i.total_rows}</td><td>${i.error_rows}</td>` +
+      `<td><button class="ghost" style="padding:3px 10px" onclick="showBatch(${i.id})">查看</button></td></tr>`).join("") +
+    `</tbody></table>`;
+}
+
+async function showBatch(id) {
+  try {
+    const b = await api("/api/batches/" + id);
+    document.getElementById("batchMeta").innerHTML =
+      `第 <b>${b.id}</b> 批「${esc(b.name)}」 · ${esc(b.created_at)} · ` +
+      `状态 <b>${b.state === "published" ? "已发布" : "已隔离"}</b> · ` +
+      `${b.total_rows} 行（错误 ${b.error_rows}） · 绑定契约 <b>v${esc(b.contract.version)}</b>（契约第 ${b.contract.id} 版快照）`;
+    let html = `<details style="margin-bottom:10px"><summary class="reason">该批次绑定的契约快照（v${esc(b.contract.version)}）</summary>` +
+      `<div class="scroll" style="max-height:30vh"><table><thead><tr><th>列名</th><th>类型</th><th>可空性</th><th>约束</th></tr></thead>` +
+      `<tbody>${contractColsHtml(b.contract.payload)}</tbody></table></div></details>`;
+    if (b.state === "quarantined") {
+      if (b.header_errors && b.header_errors.length)
+        html += `<ul class="errlist">${b.header_errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul>`;
+      html += `<div class="scroll"><table><thead><tr><th style="width:70px">行号</th><th style="width:38%">错误</th><th>原始记录</th></tr></thead><tbody>` +
+        (b.quarantine || []).map(q => {
+          const errs = q.errors.map(e =>
+            `<div>${e.column ? `<span class="mono">${esc(e.column)}</span>：` : ""}${esc(e.message)}</div>`).join("");
+          const rec = Object.entries(q.record).map(([k, v]) =>
+            `<span class="mono">${esc(k)}=${esc(v)}</span>`).join("，");
+          return `<tr class="alert"><td class="mono">${q.line}</td><td>${errs}</td><td>${rec}</td></tr>`;
+        }).join("") + `</tbody></table></div>`;
+    } else {
+      const p = rowsPreviewHtml(b.contract.payload, b.rows || [], 50);
+      html += `<div class="scroll" style="max-height:40vh"><table><thead>${p.head}</thead><tbody>${p.body}</tbody></table></div>${p.more}`;
+    }
+    document.getElementById("batchBody").innerHTML = html;
+    document.getElementById("batchDetailCard").style.display = "block";
+    document.getElementById("batchDetailCard").scrollIntoView({behavior: "smooth", block: "start"});
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function loadContractsHistory() {
+  const {items} = await api("/api/contracts");
+  const el = document.getElementById("contracts");
+  if (!items.length) { el.innerHTML = '<div class="empty">暂无记录</div>'; return; }
+  const stateTxt = {active: '<span class="badge ok">现役</span>',
+                    archived: '<span class="badge mut">已归档</span>',
+                    rejected: '<span class="badge bad">已拒绝</span>'};
+  el.innerHTML = `<table><thead><tr><th>ID</th><th>版本</th><th>时间</th><th>状态</th><th>说明</th></tr></thead><tbody>` +
+    items.map(i => `<tr><td>${i.id}</td><td class="mono">v${esc(i.version)}</td><td>${esc(i.created_at)}</td>` +
+      `<td>${stateTxt[i.state] || i.state}</td><td>${esc(i.error || "")}</td></tr>`).join("") +
+    `</tbody></table>`;
+}
+
+async function loadContractAll() { await Promise.all([loadContract(), loadContractsHistory()]); }
+async function loadAll() {
+  await Promise.all([loadContract(), loadContractsHistory(), loadCurrentBatch(), loadBatches()]);
+}
+loadAll();
+</script>
+</body>
+</html>

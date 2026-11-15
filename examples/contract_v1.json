@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "comment": "站点观测数据契约 v1：观测 ID / 站点 / UTC 小时 / 读数 / 单位",
+  "columns": [
+    {
+      "name": "obs_id",
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "pattern": "[A-Z]{2}-\\d{6}",
+      "description": "观测 ID，形如 OB-000001，批次内唯一"
+    },
+    {
+      "name": "station",
+      "type": "string",
+      "required": true,
+      "allowed": ["ST-01", "ST-02", "ST-03", "ST-04"],
+      "description": "站点编号"
+    },
+    {
+      "name": "utc_hour",
+      "type": "utc_hour",
+      "required": true,
+      "description": "观测时刻（UTC 整点，ISO 8601）"
+    },
+    {
+      "name": "reading",
+      "type": "number",
+      "required": true,
+      "min": -40,
+      "max": 50,
+      "description": "气温读数"
+    },
+    {
+      "name": "unit",
+      "type": "string",
+      "required": true,
+      "allowed": ["°C"],
+      "description": "读数单位（单位约束：仅允许 °C）"
+    }
+  ]
+}

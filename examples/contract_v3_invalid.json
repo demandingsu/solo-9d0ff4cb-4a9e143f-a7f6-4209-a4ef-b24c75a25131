@@ -1,0 +1,41 @@
+{
+  "version": "3.0.0",
+  "comment": "契约 v3（违规示例，应被拒绝）：删除 unit 列、utc_hour 改类型、reading 下限收紧、新增必填列",
+  "columns": [
+    {
+      "name": "obs_id",
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "pattern": "[A-Z]{2}-\\d{6}",
+      "description": "观测 ID"
+    },
+    {
+      "name": "station",
+      "type": "string",
+      "required": true,
+      "allowed": ["ST-01", "ST-02", "ST-03", "ST-04", "ST-05"],
+      "description": "站点编号"
+    },
+    {
+      "name": "utc_hour",
+      "type": "string",
+      "required": true,
+      "description": "观测时刻（违规：类型由 utc_hour 改为 string）"
+    },
+    {
+      "name": "reading",
+      "type": "number",
+      "required": true,
+      "min": -20,
+      "max": 60,
+      "description": "气温读数（违规：下限 -40 收紧为 -20）"
+    },
+    {
+      "name": "operator",
+      "type": "string",
+      "required": true,
+      "description": "值班员（违规：新增必填列）"
+    }
+  ]
+}

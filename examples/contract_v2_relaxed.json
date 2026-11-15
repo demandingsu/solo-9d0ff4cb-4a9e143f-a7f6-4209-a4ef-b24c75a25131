@@ -1,0 +1,49 @@
+{
+  "version": "2.0.0",
+  "comment": "契约 v2（兼容演进）：新增可选列 qc_flag；站点枚举 +ST-05；读数上限 50→60；单位枚举 +°F",
+  "columns": [
+    {
+      "name": "obs_id",
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "pattern": "[A-Z]{2}-\\d{6}",
+      "description": "观测 ID，形如 OB-000001，批次内唯一"
+    },
+    {
+      "name": "station",
+      "type": "string",
+      "required": true,
+      "allowed": ["ST-01", "ST-02", "ST-03", "ST-04", "ST-05"],
+      "description": "站点编号（v2 新增 ST-05）"
+    },
+    {
+      "name": "utc_hour",
+      "type": "utc_hour",
+      "required": true,
+      "description": "观测时刻（UTC 整点，ISO 8601）"
+    },
+    {
+      "name": "reading",
+      "type": "number",
+      "required": true,
+      "min": -40,
+      "max": 60,
+      "description": "气温读数（v2 上限放宽至 60）"
+    },
+    {
+      "name": "unit",
+      "type": "string",
+      "required": true,
+      "allowed": ["°C", "°F"],
+      "description": "读数单位（v2 起允许 °F）"
+    },
+    {
+      "name": "qc_flag",
+      "type": "string",
+      "required": false,
+      "allowed": ["PASS", "SUSPECT"],
+      "description": "质控标记（v2 新增可选列）"
+    }
+  ]
+}
